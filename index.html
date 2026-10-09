@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Last Stand: Blacksite</title>
+<style>
+:root{--amber:#d59342;--blood:#9f211c;--paper:#d8c7a3}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050504;color:#eee;font-family:Impact,"Arial Narrow",sans-serif}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:crosshair}
+#overlay,#hud,#hurt,#muzzle,#message,#pause{position:fixed;inset:0;pointer-events:none}
+#overlay{background:radial-gradient(circle at 50% 45%,transparent 30%,rgba(0,0,0,.68) 100%),linear-gradient(rgba(25,18,10,.04),rgba(0,0,0,.18));mix-blend-mode:multiply}
+#overlay:after{content:"";position:absolute;inset:0;opacity:.18;background:repeating-linear-gradient(0deg,transparent 0 3px,#000 4px)}
+#hud{padding:22px;text-shadow:2px 2px 2px #000}
+#round{position:absolute;left:28px;bottom:30px;color:#b53124;font:76px Georgia,serif;transform:rotate(-5deg)}
+#score{position:absolute;right:28px;bottom:28px;color:#eee;font-size:30px;letter-spacing:2px}
+#weapon{position:absolute;right:28px;bottom:66px;text-align:right;color:var(--paper);font:25px "Arial Narrow",sans-serif}
+#healthWrap{position:absolute;left:28px;bottom:125px;width:220px;height:12px;border:2px solid #bba77c;background:#201d18;transform:skew(-14deg)}
+#health{height:100%;width:100%;background:linear-gradient(90deg,#7b0c08,#d35b29)}
+#crosshair{position:absolute;left:50%;top:50%;width:25px;height:25px;transform:translate(-50%,-50%)}
+#crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(255,235,195,.86);box-shadow:0 0 3px #000}
+#crosshair:before{left:11px;top:2px;width:2px;height:21px}#crosshair:after{left:2px;top:11px;width:21px;height:2px}
+#message{display:flex;align-items:center;justify-content:center;text-align:center;font-size:34px;color:#ead5ab;letter-spacing:2px;text-shadow:0 3px 6px #000;transition:opacity .3s}
+#prompt{position:absolute;left:50%;top:64%;transform:translateX(-50%);font:20px Arial,sans-serif;color:#f1d39b}
+#hurt{opacity:0;background:radial-gradient(circle,transparent 35%,rgba(120,0,0,.9));transition:opacity .18s}
+#muzzle{opacity:0;background:radial-gradient(circle at 50% 54%,rgba(255,235,155,.6),transparent 13%)}
+#pause{display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle,rgba(38,32,24,.93),rgba(0,0,0,.98));pointer-events:auto}
+h1{margin:0;color:#d5c3a0;font-size:clamp(48px,8vw,110px);letter-spacing:5px;transform:rotate(-2deg);text-shadow:4px 5px #51140f}
+.tag{font:18px Arial,sans-serif;max-width:650px;text-align:center;line-height:1.5;color:#c7b999;margin:15px 24px}
+button{border:1px solid #9e7843;background:#1e1912;color:#e4cfaa;padding:14px 30px;font:bold 20px Arial;cursor:pointer;box-shadow:0 0 22px #000;margin-top:12px}button:hover{background:#6d2319}
+.controls{font:15px Arial;color:#9e947e;margin-top:18px;text-align:center;line-height:1.8}
+#gameover{color:#a21d16}.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="overlay"></div><div id="hurt"></div><div id="muzzle"></div>
+<div id="hud">
+  <div id="round">I</div><div id="healthWrap"><div id="health"></div></div>
+  <div id="weapon">SERVICE PISTOL<br><b id="ammo">8 / 64</b></div><div id="score">500</div>
+  <div id="crosshair"></div><div id="prompt"></div>
+</div>
+<div id="message"></div>
+<div id="pause">
+ <h1 id="title">LAST STAND</h1><div class="tag">BLACKSITE // An original browser survival FPS. Survive escalating waves, purchase weapons, manage ammunition and fight for a higher score.</div>
+ <button id="start">ENTER BLACKSITE</button>
+ <div class="controls">WASD move · Mouse aim · Click fire · R reload · E interact · Shift sprint · Esc pause<br>Best on a desktop browser. No server and no external assets required.</div>
+</div>
+<script>
+"use strict";
+const C=document.getElementById('game'),X=C.getContext('2d',{alpha:false});
+let W=innerWidth,H=innerHeight,DPR=Math.min(devicePixelRatio||1,1.5);
+function resize(){W=innerWidth;H=innerHeight;C.width=W*DPR;C.height=H*DPR;X.setTransform(DPR,0,0,DPR,0,0)}addEventListener('resize',resize);resize();
+const MAP=[
+"################",
+"#......#.......#",
+"#..B...#...B...#",
+"#......D.......#",
+"#..##......##..#",
+"#..............#",
+"#....P.........#",
+"#..............#",
+"#..##......##..#",
+"#.....C........#",
+"#..............#",
+"#..B.......B...#",
+"#..............#",
+"################"];
+const MW=MAP[0].length,MH=MAP.length,FOV=Math.PI/3,MAX=20;
+const keys={};let locked=false,started=false,dead=false,last=0,time=0,shake=0,msgTimer=0,roundDelay=0;
+let player={x:5.5,y:6.5,a:0,hp:100,score:500,gun:0,ammo:8,reserve:64,reload:0,fire:0,bob:0};
+const guns=[{name:'SERVICE PISTOL',mag:8,damage:42,rate:.28,reload:1.35,cost:0},{name:'TRENCH CARBINE',mag:24,damage:31,rate:.105,reload:1.7,cost:950}];
+let round=0,toSpawn=0,spawnClock=0,zombies=[],kills=0;
+const spawns=[[1.5,1.5],[14.5,1.5],[1.5,12.5],[14.5,12.5],[8.5,1.5],[14.5,7.5]];
+const wallAt=(x,y)=>{const r=MAP[Math.floor(y)]?.[Math.floor(x)];return !r||r==='#'};
+function roman(n){return n<6?'I'.repeat(n):String(n)}
+function say(t,s=2){document.getElementById('message').innerHTML=t;document.getElementById('message').style.opacity=1;msgTimer=s}
+function newRound(){round++;toSpawn=5+round*3;spawnClock=1.5;document.getElementById('round').textContent=roman(round);say('ROUND '+round,2.2)}
+function spawn(){let choices=spawns.filter(s=>Math.hypot(s[0]-player.x,s[1]-player.y)>6),s=choices[(Math.random()*choices.length)|0];zombies.push({x:s[0],y:s[1],hp:70+round*18,speed:.45+Math.min(round*.025,.35),hit:0,attack:0,phase:Math.random()*6.28});toSpawn--}
+function reset(){player={x:5.5,y:6.5,a:0,hp:100,score:500,gun:0,ammo:8,reserve:64,reload:0,fire:0,bob:0};round=0;toSpawn=0;zombies=[];kills=0;dead=false;newRound();updateHUD()}
+function moveEntity(o,nx,ny){if(!wallAt(nx,o.y))o.x=nx;if(!wallAt(o.x,ny))o.y=ny}
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyR')reload();if(e.code==='KeyE')interact()});addEventListener('keyup',e=>keys[e.code]=false);
+C.addEventListener('click',()=>{if(!locked)C.requestPointerLock();else shoot()});document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===C;if(started&&!dead)document.getElementById('pause').classList.toggle('hidden',locked)});
+document.addEventListener('mousemove',e=>{if(locked)player.a+=e.movementX*.0023});
+document.getElementById('start').onclick=()=>{started=true;reset();C.requestPointerLock();document.getElementById('pause').classList.add('hidden')};
+function reload(){let g=guns[player.gun];if(player.reload||player.ammo>=g.mag||player.reserve<=0)return;player.reload=g.reload;say('RELOADING',.7)}
+function interact(){let cell=MAP[Math.floor(player.y)]?.[Math.floor(player.x)];let d=Math.hypot(player.x-6.5,player.y-9.5);if(d<1.7&&player.gun===0){if(player.score>=950){player.score-=950;player.gun=1;player.ammo=24;player.reserve=120;say('TRENCH CARBINE ACQUIRED',1.5)}else say('950 POINTS REQUIRED',1)}else if(cell==='P'&&player.score>=250){player.score-=250;player.hp=Math.min(100,player.hp+40);say('FIELD DRESSING +40',1)}updateHUD()}
+function shoot(){let g=guns[player.gun];if(player.fire||player.reload||dead)return;if(player.ammo<=0){reload();return}player.ammo--;player.fire=g.rate;shake=5;document.getElementById('muzzle').style.opacity=.8;setTimeout(()=>document.getElementById('muzzle').style.opacity=0,45);
+ let best=null,bestD=99;for(const z of zombies){let dx=z.x-player.x,dy=z.y-player.y,d=Math.hypot(dx,dy),da=Math.atan2(dy,dx)-player.a;da=Math.atan2(Math.sin(da),Math.cos(da));if(Math.abs(da)<.035+.18/d&&d<bestD&&lineClear(player.x,player.y,z.x,z.y)){best=z;bestD=d}}
+ if(best){best.hp-=g.damage*(Math.random()>.82?2:1);best.hit=.12;player.score+=10;if(best.hp<=0){zombies.splice(zombies.indexOf(best),1);player.score+=90;kills++;}}updateHUD()}
+function lineClear(x1,y1,x2,y2){let d=Math.hypot(x2-x1,y2-y1),steps=Math.ceil(d*10);for(let i=1;i<steps;i++){let t=i/steps;if(wallAt(x1+(x2-x1)*t,y1+(y2-y1)*t))return false}return true}
+function update(dt){if(!locked||dead)return;time+=dt;if(msgTimer>0){msgTimer-=dt;if(msgTimer<=0)document.getElementById('message').style.opacity=0}player.fire=Math.max(0,player.fire-dt);shake=Math.max(0,shake-dt*25);
+ if(player.reload>0){player.reload-=dt;if(player.reload<=0){let g=guns[player.gun],n=Math.min(g.mag-player.ammo,player.reserve);player.ammo+=n;player.reserve-=n;updateHUD()}}
+ let f=(keys.KeyW?1:0)-(keys.KeyS?1:0),s=(keys.KeyD?1:0)-(keys.KeyA?1:0),len=Math.hypot(f,s)||1,run=keys.ShiftLeft?1.55:1,sp=2.25*run*dt;let dx=(Math.cos(player.a)*f+Math.cos(player.a+Math.PI/2)*s)/len*sp,dy=(Math.sin(player.a)*f+Math.sin(player.a+Math.PI/2)*s)/len*sp;moveEntity(player,player.x+dx,player.y+dy);player.bob+=Math.hypot(dx,dy)*8;
+ if(toSpawn>0){spawnClock-=dt;if(spawnClock<=0){spawn();spawnClock=Math.max(.35,1.25-round*.04)}}else if(!zombies.length&&!roundDelay){roundDelay=3;say('WAVE CLEARED',1.5)}if(roundDelay){roundDelay-=dt;if(roundDelay<=0){roundDelay=0;newRound()}}
+ for(const z of [...zombies]){z.hit=Math.max(0,z.hit-dt);z.attack-=dt;let dx=player.x-z.x,dy=player.y-z.y,d=Math.hypot(dx,dy);if(d>.63){let vx=dx/d*z.speed*dt,vy=dy/d*z.speed*dt;moveEntity(z,z.x+vx,z.y+vy)}else if(z.attack<=0){z.attack=.85;player.hp-=8+round*.7;shake=9;document.getElementById('hurt').style.opacity=.9;setTimeout(()=>document.getElementById('hurt').style.opacity=0,170);if(player.hp<=0)gameOver()} }updateHUD();updatePrompt()}
+function gameOver(){dead=true;document.exitPointerLock();document.getElementById('title').innerHTML='<span id="gameover">OVERRUN</span>';document.querySelector('.tag').textContent=`You survived ${round} rounds and eliminated ${kills} infected. Final score: ${player.score}.`;document.getElementById('start').textContent='TRY AGAIN';document.getElementById('pause').classList.remove('hidden')}
+function updatePrompt(){let p='';if(Math.hypot(player.x-6.5,player.y-9.5)<1.7&&player.gun===0)p='[E] Buy Trench Carbine · 950';else if(MAP[Math.floor(player.y)]?.[Math.floor(player.x)]==='P')p='[E] Field Dressing · 250';document.getElementById('prompt').textContent=p}
+function updateHUD(){document.getElementById('score').textContent=player.score;document.getElementById('health').style.width=Math.max(0,player.hp)+'%';document.getElementById('weapon').firstChild.textContent=guns[player.gun].name;document.getElementById('ammo').textContent=player.reload>0?'RELOADING':player.ammo+' / '+player.reserve}
+function ray(a){let sin=Math.sin(a),cos=Math.cos(a),d=0,x,y,cell;while(d<MAX){d+=.025;x=player.x+cos*d;y=player.y+sin*d;cell=MAP[Math.floor(y)]?.[Math.floor(x)];if(!cell||cell==='#')break}return{d,x,y,cell}}
+function render(){let grd=X.createLinearGradient(0,0,0,H);grd.addColorStop(0,'#15130f');grd.addColorStop(.52,'#3b352a');grd.addColorStop(.53,'#211d17');grd.addColorStop(1,'#080806');X.fillStyle=grd;X.fillRect(0,0,W,H);
+ let cols=Math.min(520,Math.ceil(W/2)),cw=W/cols,depth=new Float32Array(cols);for(let i=0;i<cols;i++){let a=player.a-FOV/2+(i/cols)*FOV,r=ray(a),d=r.d*Math.cos(a-player.a);depth[i]=d;let wh=Math.min(H*1.8,H/d),top=(H-wh)/2+Math.sin(player.bob)*2;let edge=(Math.abs((r.x%1)-.5)>.47||Math.abs((r.y%1)-.5)>.47),light=Math.max(12,145-d*10)+(edge?15:0),mortar=((Math.floor(r.x*3)+Math.floor(r.y*3))%3===0)?-9:0;X.fillStyle=`rgb(${light+mortar},${light*.83+mortar},${light*.60+mortar})`;X.fillRect(i*cw,top,cw+1,wh);X.fillStyle=`rgba(0,0,0,${Math.min(.76,d/17)})`;X.fillRect(i*cw,top,cw+1,wh)}
+ let sprites=zombies.map(z=>{let dx=z.x-player.x,dy=z.y-player.y;return{z,d:Math.hypot(dx,dy),a:Math.atan2(dy,dx)}}).sort((a,b)=>b.d-a.d);for(const q of sprites){let da=Math.atan2(Math.sin(q.a-player.a),Math.cos(q.a-player.a));if(Math.abs(da)>FOV*.7)continue;let sx=(.5+da/FOV)*W,size=Math.min(H*1.2,H/q.d*.85),ci=Math.floor(sx/W*cols);if(ci<0||ci>=cols||q.d>depth[ci]+.3)continue;drawZombie(q.z,sx,H/2+size*.08,size,q.d)}drawGun();
+}
+function drawZombie(z,x,y,s,d){X.save();X.translate(x,y);let hit=z.hit>0;X.globalAlpha=Math.max(.25,1-d/22);X.fillStyle=hit?'#f2d2b0':'#443e31';X.fillRect(-s*.18,-s*.42,s*.36,s*.57);X.fillStyle='#24251f';X.fillRect(-s*.27,s*.02,s*.19,s*.48);X.fillRect(s*.08,s*.02,s*.19,s*.48);X.fillStyle=hit?'#fff0d0':'#635c48';X.beginPath();X.ellipse(0,-s*.53,s*.17,s*.21,0,0,Math.PI*2);X.fill();X.fillStyle='#d47c2f';X.shadowColor='#ff5a13';X.shadowBlur=10;X.fillRect(-s*.09,-s*.57,s*.045,s*.028);X.fillRect(s*.045,-s*.57,s*.045,s*.028);X.shadowBlur=0;X.fillStyle='#1c1712';X.fillRect(-s*.08,-s*.46,s*.16,s*.025);X.restore()}
+function drawGun(){let bob=Math.sin(player.bob)*5,kick=player.fire?12:0;X.save();X.translate(W/2+Math.cos(player.bob*.5)*6+shake*(Math.random()-.5),H+bob+kick);X.fillStyle='#11100e';X.beginPath();X.moveTo(-60,0);X.lineTo(-44,-130);X.lineTo(-23,-215);X.lineTo(23,-215);X.lineTo(48,-125);X.lineTo(105,0);X.fill();X.fillStyle='#4b463d';X.fillRect(-18,-260,36,110);X.fillStyle='#1a1916';X.fillRect(-12,-292,24,55);X.fillStyle='#777062';X.fillRect(-9,-292,18,24);X.restore()}
+function loop(t){let dt=Math.min(.035,(t-last)/1000||0);last=t;update(dt);render();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+</script>
+</body>
+</html>
